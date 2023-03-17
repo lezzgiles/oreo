@@ -3,7 +3,11 @@
 import sys
 import re
 
-class Tokenizer(object):
+class ParseFailException(Exception): pass
+class ParseDefinitionException(Exception): pass
+class TokenizeFailException(Exception): pass
+
+class Tokenizer:
     def __init__(self,ignore_whitespace=True):
         self.tokens = {}
         self.ignore_whitespace = ignore_whitespace
@@ -12,29 +16,34 @@ class Tokenizer(object):
         self.tokens[name] = {'regex':regex,'value':value}
 
     def next_token(self,name,text,offset):
-        if self.ignore_whitespace:
-            m = re.match('\s+',text[offset:])
-            if m:
-                offset += len(m.group())
+        offset = self.strip_whitespace(text,offset)
         m = re.match(self.tokens[name]['regex'],text[offset:])
         if m:
             offset += len(m.group())
             return Token(name,m.group(),self.tokens[name]['value']),offset
+        else:
+            raise TokenizeFailException("Cannot match token")
+        
+    def strip_whitespace(self,text,offset):
+        if self.ignore_whitespace:
+            m = re.match('\s+',text[offset:])
+            if m:
+                offset += len(m.group())
+        return offset
 
-
-class Token(object):
+class Token:
     def __init__(self,token,body,value):
         self.token = token
         self.body = body
         self.value_function = value
 
     def value(self):
-        if self.value:
+        if self.value_function:
             return self.value_function(self.body)
         else:
             return self.body
         
-class Node(object):
+class Node:
     def __init__(self,rule,value):
         self.rule = rule
         self.children = []
@@ -46,7 +55,7 @@ class Node(object):
     def value(self):
         return self.value_function(*self.children)
 
-class Parser(object):
+class Parser:
     def __init__(self):
         self.rules = {}
 
@@ -55,29 +64,39 @@ class Parser(object):
     
     def parse(self,text):
         if 'start' not in self.rules:
-            sys.exit(f"Parse error: There must be a special top rule named \'start\'")
+            raise ParseDefinitionException("There must be a special top rule named \'start\'")
         if not self.rules['start']['tokenizer']:
-            sys.exit(f"Parse error: \'start\' rule must specify a tokenizer")
-        return self.parse_rule('start',text,0,tokenizer=self.rules['start']['tokenizer'])
+            raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
+        tree,offset = self.parse_rule('start',text,0,tokenizer=self.rules['start']['tokenizer'])
+        offset = self.rules['start']['tokenizer'].strip_whitespace(text,offset)
+        if offset != len(text):
+            raise ParseFailException(f"Extra input found after program: {text[offset:]}")
+        return tree
 
     def parse_rule(self,rule,text,offset,tokenizer=None):
         if rule not in self.rules:
-            sys.exit(f"Parse error: Rule {rule} not in rules")
+            raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
-        node = Node(rule,self.rules[rule]['value'])
-        for element in self.rules[rule]['body']:
-            if element in tokenizer.tokens:
-                token,offset = tokenizer.next_token(element,text,offset)
-                node.add_child(token)
+        for pattern in self.rules[rule]['body']:
+            node = Node(rule,self.rules[rule]['value'])
+            saved_offset = offset
+            matched = False
+            try:
+                for element in pattern:
+                    if element in tokenizer.tokens:
+                        try:
+                            token,offset = tokenizer.next_token(element,text,offset)
+                            node.add_child(token)
+                        except TokenizeFailException:
+                            raise ParseFailException(f"Did not match token {element} at offset {offset}")
+                    else:
+                        raise ParseFailException(f"Unknown token at offset {offset}")
+                break   # Got a complete match, so we are done!
+            except ParseFailException:
+                offset = saved_offset
 
-        return node
+            else:
+                raise ParseFailException(f"Could not match pattern {pattern}")
+            
+        return node,offset
         
-if __name__ == "__main__":
-    t = Tokenizer()
-    t.add_token('NUMBER','-?[0-9]+',lambda n: int(n))
-    t.add_token('PLUS','\+')
-
-    p = Parser()
-    p.add_rule('start',['NUMBER','PLUS','NUMBER'],tokenizer=t,value=lambda a,b,c: a.value()+c.value())
-
-    print(p.parse('2 + 1').value())
