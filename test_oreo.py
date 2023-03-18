@@ -10,14 +10,17 @@ def simple_addition_parser():
     t.add_token('MINUS','\-')
 
     p = Parser()
-    p.add_rule('start',[['NUMBER','PLUS','NUMBER'],['NUMBER','MINUS','NUMBER']],tokenizer=t,value=lambda a,b,c: a.value()+c.value() if b.value() == '+' else a.value()-c.value())
+    p.add_rule('start',[
+        (['NUMBER','PLUS','NUMBER'], lambda a,b,c: a.value()+c.value()),
+        (['NUMBER','MINUS','NUMBER'],lambda a,b,c: a.value()-c.value()),
+    ], tokenizer=t)
 
     return p
 
 @pytest.fixture
 def arithmetic_parser():
     t = Tokenizer()
-    t.add_token('NUMBER','-[0-9]+',lambda n: int(n))
+    t.add_token('NUMBER','-?[0-9]+',lambda n: int(n))
     t.add_token('PLUS','\+')
     t.add_token('MINUS','-')
     t.add_token('MULTIPLY','\*')
@@ -26,20 +29,20 @@ def arithmetic_parser():
     t.add_token('CLOSE_PAREN','\)')
 
     p = Parser()
-    p.add_rule('start',[['add-term']],tokenizer=t)
+    p.add_rule('start',[(['add-term'], lambda a: a.value())],tokenizer=t)
     p.add_rule('add-term',[
-        ['add-term','PLUS','mult-term'],
-        ['add-term','MINUS','mult-term'],
-        ['mult-term'],
+        (['mult-term','PLUS','add-term'], lambda a,b,c: a.value() + c.value()),
+        (['mult-term','MINUS','add-term'], lambda a,b,c: a.value() - c.value()),
+        (['mult-term'], lambda a: a.value()),
     ])
     p.add_rule('mult-term',[
-        ['mult-term','MULTIPLY','number-term'],
-        ['mult-term','DIVIDE','number-term'],
-        ['number-term'],
+        (['number-term','MULTIPLY','mult-term'], lambda a,b,c: a.value() + c.value()),
+        (['number-term','DIVIDE','mult-term'], lambda a,b,c: a.value() + c.value()),
+        (['number-term'], lambda a: a.value()),
     ])
     p.add_rule('number-term',[
-        ['OPEN_PAREN','add-term','CLOSE_PAREN'],
-        ['NUMBER']
+        (['OPEN_PAREN','add-term','CLOSE_PAREN'], lambda a,b,c: b.value()),
+        (['NUMBER'], lambda a: a.value()),
     ])
 
     return p

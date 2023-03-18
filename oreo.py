@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from functools import lru_cache
 import sys
 import re
 
@@ -59,8 +60,8 @@ class Parser:
     def __init__(self):
         self.rules = {}
 
-    def add_rule(self,name,body,tokenizer=None,value=None):
-        self.rules[name] = {'body':body,'tokenizer':tokenizer,'value':value}
+    def add_rule(self,name,body,tokenizer=None):
+        self.rules[name] = {'body':body,'tokenizer':tokenizer}
     
     def parse(self,text):
         if 'start' not in self.rules:
@@ -70,15 +71,16 @@ class Parser:
         tree,offset = self.parse_rule('start',text,0,tokenizer=self.rules['start']['tokenizer'])
         offset = self.rules['start']['tokenizer'].strip_whitespace(text,offset)
         if offset != len(text):
-            raise ParseFailException(f"Extra input found after program: {text[offset:]}")
+            raise ParseFailException(f"Extra input found after input: {text[offset:]}")
         return tree
 
+    @lru_cache
     def parse_rule(self,rule,text,offset,tokenizer=None):
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
-        for pattern in self.rules[rule]['body']:
-            node = Node(rule,self.rules[rule]['value'])
+        for pattern,value_function in self.rules[rule]['body']:
+            node = Node(rule,value_function)
             saved_offset = offset
             matched = False
             try:
@@ -89,9 +91,16 @@ class Parser:
                             node.add_child(token)
                         except TokenizeFailException:
                             raise ParseFailException(f"Did not match token {element} at offset {offset}")
+                    elif element in self.rules:
+                        try:
+                            subnode,offset = self.parse_rule(element,text,offset,tokenizer)
+                            node.add_child(subnode)
+                        except ParseFailException:
+                            raise ParseFailException(f"Did not match rule {element} at offset {offset}")
                     else:
-                        raise ParseFailException(f"Unknown token at offset {offset}")
-                break   # Got a complete match, so we are done!
+                        raise ParseFailException(f"Unknown token/rule at offset {offset}")
+                # Got a complete match, so we are done!
+                break
             except ParseFailException:
                 offset = saved_offset
 
