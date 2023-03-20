@@ -73,7 +73,7 @@ class Parser:
             raise ParseFailException(f"Extra input found after input: {text[offset:]}")
         return tree
 
-    def parse_element(element):
+    def expand_grammar_item(element):
         """
         Looks at an element in the grammar, e.g. this+, and returns the element name
         'this' and the minimum and maximum number of instances, for example:
@@ -92,30 +92,30 @@ class Parser:
         
         return m.group(1),matches
 
-    def parse_thing(self,element,text,offset,tokenizer):
+    def parse_element(self,element,text,offset,tokenizer):
         """
         Parse element, which can be a terminal or a non-terminal.
         Return a Node or a Token and an updated offset, or raise ParseFailException
         """
         if element in tokenizer.tokens:
-            thing,offset = tokenizer.next_token(element,text,offset)
+            tree,offset = tokenizer.next_token(element,text,offset)
         elif element in self.rules:
-            thing,offset = self.parse_rule(element,text,offset,tokenizer)
+            tree,offset = self.parse_rule(element,text,offset,tokenizer)
         else:
             raise ParseDefinitionException(f"element {element} not defined")
-        return thing,offset
+        return tree,offset
 
-    def parse_syntax_thing(self,element,text,offset,tokenizer):
-        elt,matches = Parser.parse_element(element)
+    def parse_grammar_item(self,element,text,offset,tokenizer):
+        elt,matches = Parser.expand_grammar_item(element)
         if not matches:
-            return self.parse_thing(elt,text,offset,tokenizer)
+            return self.parse_element(elt,text,offset,tokenizer)
         else:
             retval = []
             count = 0
             while True:
                 try:
-                    node,offset = self.parse_thing(elt,text,offset,tokenizer)
-                    retval.append(node)
+                    tree,offset = self.parse_element(elt,text,offset,tokenizer)
+                    retval.append(tree)
                 except ParseFailException:
                     if matches[0] > count:
                         raise ParseFailException(f"Not enough terms match in list")
@@ -135,8 +135,8 @@ class Parser:
             saved_offset = offset
             try:
                 for element in pattern:
-                    thing,offset = self.parse_syntax_thing(element,text,offset,tokenizer)
-                    node.add_child(thing)
+                    tree,offset = self.parse_grammar_item(element,text,offset,tokenizer)
+                    node.add_child(tree)
                 # Got a complete match, so we are done!
                 break
             except ParseFailException:
