@@ -11,17 +11,17 @@ def simple_addition_parser():
 
     p = Parser()
     p.add_rule('start',[
-        (['NUMBER','PLUS','NUMBER'], lambda a,b,c: a.value()+c.value()),
-        (['NUMBER','MINUS','NUMBER'],lambda a,b,c: a.value()-c.value()),
+        (['NUMBER','PLUS','NUMBER'], lambda a,b,c: a.walk()+c.walk()),
+        (['NUMBER','MINUS','NUMBER'],lambda a,b,c: a.walk()-c.walk()),
     ], tokenizer=t)
 
     return p
 
 def test_simple_addition(simple_addition_parser):
-    assert simple_addition_parser.parse('2 + 1').value() == 3
+    assert simple_addition_parser.parse('2 + 1').walk() == 3
 
 def test_simple_subtraction(simple_addition_parser):
-    assert simple_addition_parser.parse('2 - 1').value() == 1
+    assert simple_addition_parser.parse('2 - 1').walk() == 1
 
 def test_bad_input(simple_addition_parser):
     with pytest.raises(ParseFailException):
@@ -36,5 +36,5 @@ def test_extra_input(simple_addition_parser):
         simple_addition_parser.parse('1 + 1 + 1')
 
 def test_trailing_whitespace(simple_addition_parser):
-    assert simple_addition_parser.parse('2 + 1  ').value() == 3
+    assert simple_addition_parser.parse('2 + 1  ').walk() == 3
 

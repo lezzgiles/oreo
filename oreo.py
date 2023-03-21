@@ -12,15 +12,15 @@ class Tokenizer:
         self.tokens = {}
         self.ignore_whitespace = ignore_whitespace
 
-    def add_token(self,name,regex,value=None):
-        self.tokens[name] = {'regex':regex,'value':value}
+    def add_token(self,name,regex,walk=None):
+        self.tokens[name] = {'regex':regex,'walk':walk}
 
     def next_token(self,name,text,offset):
         offset = self.strip_whitespace(text,offset)
         m = re.match(self.tokens[name]['regex'],text[offset:])
         if m:
             offset += len(m.group())
-            return Token(name,m.group(),self.tokens[name]['value']),offset
+            return Token(name,m.group(),self.tokens[name]['walk']),offset
         else:
             raise ParseFailException("Cannot match token")
         
@@ -32,28 +32,28 @@ class Tokenizer:
         return offset
 
 class Token:
-    def __init__(self,token,body,value):
+    def __init__(self,token,body,walk_function):
         self.token = token
         self.body = body
-        self.value_function = value
+        self.walk_function = walk_function
 
-    def value(self):
-        if self.value_function:
-            return self.value_function(self.body)
+    def walk(self,*context):
+        if self.walk_function:
+            return self.walk_function(*context,self.body)
         else:
             return self.body
         
 class Node:
-    def __init__(self,rule,value):
+    def __init__(self,rule,walk_function):
         self.rule = rule
         self.children = []
-        self.value_function = value
+        self.walk_function = walk_function
 
     def add_child(self,child):
         self.children.append(child)
 
-    def value(self):
-        return self.value_function(*self.children)
+    def walk(self,*context):
+        return self.walk_function(*context,*self.children)
 
 class Parser:
     def __init__(self):
@@ -130,8 +130,8 @@ class Parser:
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
-        for pattern,value_function in self.rules[rule]['body']:
-            node = Node(rule,value_function)
+        for pattern,walk_function in self.rules[rule]['body']:
+            node = Node(rule,walk_function)
             saved_offset = offset
             try:
                 for element in pattern:

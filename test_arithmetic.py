@@ -14,29 +14,29 @@ def arithmetic_parser():
     t.add_token('CLOSE_PAREN','\)')
 
     p = Parser()
-    p.add_rule('start',[(['add-term'], lambda a: a.value())],tokenizer=t)
+    p.add_rule('start',[(['add-term'], lambda a: a.walk())],tokenizer=t)
     p.add_rule('add-term',[
-        (['mult-term','PLUS','add-term'], lambda a,b,c: a.value() + c.value()),
-        (['mult-term','MINUS','add-term'], lambda a,b,c: a.value() - c.value()),
-        (['mult-term'], lambda a: a.value()),
+        (['mult-term','PLUS','add-term'], lambda a,b,c: a.walk() + c.walk()),
+        (['mult-term','MINUS','add-term'], lambda a,b,c: a.walk() - c.walk()),
+        (['mult-term'], lambda a: a.walk()),
     ])
     p.add_rule('mult-term',[
-        (['number-term','MULTIPLY','mult-term'], lambda a,b,c: a.value() * c.value()),
-        (['number-term','DIVIDE','mult-term'], lambda a,b,c: a.value() / c.value()),
-        (['number-term'], lambda a: a.value()),
+        (['number-term','MULTIPLY','mult-term'], lambda a,b,c: a.walk() * c.walk()),
+        (['number-term','DIVIDE','mult-term'], lambda a,b,c: a.walk() / c.walk()),
+        (['number-term'], lambda a: a.walk()),
     ])
     p.add_rule('number-term',[
-        (['OPEN_PAREN','add-term','CLOSE_PAREN'], lambda a,b,c: b.value()),
-        (['NUMBER'], lambda a: a.value()),
+        (['OPEN_PAREN','add-term','CLOSE_PAREN'], lambda a,b,c: b.walk()),
+        (['NUMBER'], lambda a: a.walk()),
     ])
 
     return p
 
 def test_arith(arithmetic_parser):
-    assert arithmetic_parser.parse('2 + 1').value() == 3
+    assert arithmetic_parser.parse('2 + 1').walk() == 3
     
 def test_arith_brackets(arithmetic_parser):
-    assert arithmetic_parser.parse('(2 + 1) * 3').value() == 9
+    assert arithmetic_parser.parse('(2 + 1) * 3').walk() == 9
     
 def test_arith_divide(arithmetic_parser):
-    assert arithmetic_parser.parse('(3 - 1)/2').value() == 1
+    assert arithmetic_parser.parse('(3 - 1)/2').walk() == 1
