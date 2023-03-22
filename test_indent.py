@@ -1,16 +1,6 @@
 from oreo import Tokenizer,Parser,ParseFailException,ParseDefinitionException
-
-import re
-
+from functools import reduce
 import pytest
-
-def set_value(ctx,symbol,walk):
-    ctx[symbol] = walk
-
-def get_value(ctx,symbol):
-    if symbol not in ctx:
-        raise NameError(f"Symbol {symbol} not set!")
-    return ctx[symbol]
 
 @pytest.fixture
 def language_parser():
@@ -26,11 +16,21 @@ def language_parser():
     t.add_token('VALUE','value')
     t.add_token('SYMBOL','[a-zA-Z]+')
     t.add_token('SEMICOLON',';')
-    t.add_comment_style('/\*.*?\*/',re.DOTALL)
-    t.add_comment_style('#.*$',re.MULTILINE)
+    t.add_token('ADD_BLOCK_START','add:')
+    t.add_token('MULTIPLY_BLOCK_START','multiply:')
+    t.use_indent_tokens('INDENT','OUTDENT')
 
     p = Parser()
-    p.add_rule('start',[(['statement+'],lambda ctx,a: [ i.walk(ctx) for i in a ] )],tokenizer=t)
+    
+    p.add_rule('start',[(['add-block+'],lambda ctx,a: sum([ i.walk(ctx) for i in a ]) )],tokenizer=t)
+
+    p.add_rule('add-block',[
+        (['ADD_BLOCK_START','INDENT','multiply-block+','OUTDENT'], lambda ctx,a: sum([ i.walk(ctx) for i in a ]))
+    ])
+    p.add_rule('multiply-block',[
+        (['MULTIPLY_BLOCK_START','INDENT','add-term+','OUTDENT'], lambda ctx,a: reduce(lambda x,y:x*y,[ i.walk(ctx) for i in a ]) )
+    ])
+
     p.add_rule('add-term',[
         (['mult-term','PLUS','add-term'], lambda ctx,a,b,c: a.walk(ctx) + c.walk(ctx)),
         (['mult-term','MINUS','add-term'], lambda ctx,a,b,c: a.walk(ctx) - c.walk(ctx)),
@@ -53,29 +53,13 @@ def language_parser():
 
     return p
 
-def test_assign(language_parser):
+def test_indent_output(language_parser):
     context = {}
-    assert (language_parser.parse('a = 1 + 1; b = 2 * 3; value a+b;').walk(context))[-1] == 8
-
-
-def test_comments_style_to_eol(language_parser):
     p = """
-        a = 1 + 1;    # This is a comment
-           b = 2 * 3;
-        value a+b;
-        """
-    context = {}
-    assert (language_parser.parse(p).walk(context))[-1] == 8
-
-def test_comments_multiline_style(language_parser):
-    p = """
-        a = 1 + 1; # This is a comment
-        /* And this is a
-         * multiline
-         * comment.
-         */
-        b = 2 * 3;
-        value a+b;
-        """
-    context = {}
-    assert (language_parser.parse(p).walk(context))[-1] == 8
+add:
+  multiply:
+    1 2 3
+  multiply:
+    2 3 4
+    """
+    assert (language_parser.parse(p).walk(context))[-1] == 30

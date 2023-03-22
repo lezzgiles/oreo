@@ -11,28 +11,55 @@ class Tokenizer:
     def __init__(self,ignore_whitespace=True):
         self.tokens = {}
         self.ignore_whitespace = ignore_whitespace
+        self.comment_styles = []
+        self.indent_tokens = ()
+
+    def eat(cls,text,offset,regex,flags=0):
+        m = re.match(regex,text[offset:],flags)
+        if m:
+            offset += len(m.group())
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
 
+    def add_comment_style(self,regex,flags=0):
+        self.comment_styles.append((regex,flags))
+
+    def use_indent_tokens(self,indent_token,outdent_token,tabsize=0):
+        if not self.ignore_whitespace:
+            raise ParseDefinitionException("Cannot use indent/outdent tokens and not ignore_whitespace")
+        self.indent_tokens = (indent_token,outdent_token)
+        self.tabsize = tabsize
+        
     def next_token(self,name,text,offset):
-        offset = self.strip_whitespace(text,offset)
-        m = re.match(self.tokens[name]['regex'],text[offset:])
+        offset = self.strip_whitespace_and_comments(text,offset)
+        m = re.match(self.tokens[name]['regex'],text[offset:],)
         if m:
             offset += len(m.group())
             return Token(name,m.group(),self.tokens[name]['walk']),offset
         else:
             raise ParseFailException("Cannot match token")
         
-    def strip_whitespace(self,text,offset):
-        if self.ignore_whitespace:
-            m = re.match('\s+',text[offset:])
-            if m:
-                offset += len(m.group())
+    def strip_whitespace_and_comments(self,text,offset):
+        # Repeatedly try removing whitespace and comments
+        modified = True
+        while modified:
+            modified = False
+            if self.ignore_whitespace:
+                # End of line?
+                m = re.match('\s+',text[offset:])
+                if m:
+                    offset += len(m.group())
+                    modified = True
+            for (comment_style,flags) in self.comment_styles:
+                m = re.match(comment_style,text[offset:],flags)
+                if m:
+                    offset += len(m.group())
+                    modified = True
         return offset
 
 class Token:
-    def __init__(self,token,body,walk_function):
+    def __init__(self,token,body,walk_function=None):
         self.token = token
         self.body = body
         self.walk_function = walk_function
@@ -68,7 +95,7 @@ class Parser:
         if not self.rules['start']['tokenizer']:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
         tree,offset = self.parse_rule('start',text,0,tokenizer=self.rules['start']['tokenizer'])
-        offset = self.rules['start']['tokenizer'].strip_whitespace(text,offset)
+        offset = self.rules['start']['tokenizer'].strip_whitespace_and_comments(text,offset)
         if offset != len(text):
             raise ParseFailException(f"Extra input found after input: {text[offset:]}")
         return tree
@@ -97,7 +124,7 @@ class Parser:
         Parse element, which can be a terminal or a non-terminal.
         Return a Node or a Token and an updated offset, or raise ParseFailException
         """
-        if element in tokenizer.tokens:
+        if element in list(tokenizer.tokens)+list(tokenizer.indent_tokens):
             tree,offset = tokenizer.next_token(element,text,offset)
         elif element in self.rules:
             tree,offset = self.parse_rule(element,text,offset,tokenizer)
