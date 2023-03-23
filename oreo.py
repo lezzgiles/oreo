@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from functools import lru_cache
-from copy import copy
+from copy import deepcopy
 
 import sys
 import re
@@ -10,14 +10,17 @@ class ParseFailException(Exception): pass
 class ParseDefinitionException(Exception): pass
 
 class LocationTracker:
-    def __init__(self,text,offset=0,newline=True,indent=0):
+    def __init__(self,text,offset=0,newline=True,indents=None):
         self._text = text
         self._offset = offset
         self._newline = newline
-        self._indent = indent
+        self._last_indent = 0
+        self._highwatermark = 0
 
     def text(self):
         return self._text[self._offset:]
+
+    def last_indent(self): return self._last_indent
 
     def match(self,regex,flags=0):
         """
@@ -55,7 +58,7 @@ class LocationTracker:
             previous_newline = self._newline
             spaces = self.match('[ \t]*')
             if previous_newline:
-                new_indent = len(spaces)
+                self._last_indent = len(spaces)
             if len(spaces) > 0:
                 return True
             else:
@@ -68,12 +71,16 @@ class LocationTracker:
         self._offset = location._offset
         self._newline = location._newline
 
+    def copy(self):
+        return LocationTracker(self._text,self._offset,self._newline)
+
 class Tokenizer:
     def __init__(self,ignore_whitespace=True):
         self.tokens = {}
         self.ignore_whitespace = ignore_whitespace
         self.comment_styles = []
         self.indent_tokens = ()
+        self.indents = [0]
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
@@ -89,10 +96,39 @@ class Tokenizer:
         
     def next_token(self,name,location):
         self.strip_whitespace_and_comments(location)
+        location._highwatermark = location._offset
+        
+        # Now we've stripped everything, comments and spaces, up to
+        # the next real thing, so look at the indent level.  We look
+        # at the level before every token, but it won't change in the same line
         if self.indent_tokens:
-            # Check for indent or outdent
-            pass
+            current_indent = location.last_indent()
+            
+            if current_indent > self.indents[-1]:
+                # Indent increased
+                self.indents.append(current_indent)
+                if name == self.indent_tokens[0]:
+                    return Token(self.indent_tokens[0],current_indent)
+                else:
+                    raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[0]}")
+                    
+            elif not current_indent in self.indents:
+                raise ParseFailException("Outdent to non-matching indentation level")
+            
+            elif current_indent < self.indents[-1]:
+                # Indent decreased
+                self.indents.pop()
+                if name == self.indent_tokens[1]:
+                    return Token(self.indent_tokens[1],current_indent)
+                else:
+                    raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[1]}")
+
+        # If we are expecting the INDENT or OUTDENT tokens but didn't see one, that's an error
+        if name in self.indent_tokens:
+            raise ParseFailException
+        
         value = location.match(self.tokens[name]['regex'])
+        location._highwatermark = location._offset
         return Token(name,value,self.tokens[name]['walk'])
         
     def strip_whitespace_and_comments(self,location):
@@ -147,7 +183,11 @@ class Parser:
         if not self.rules['start']['tokenizer']:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
         location = LocationTracker(text)
-        tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'])
+        try:
+            tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'])
+        except ParseFailException:
+            raise ParseFailException(f"Failed to parse: Failed around: {location._text[location._highwatermark:]}")
+        
         self.rules['start']['tokenizer'].strip_whitespace_and_comments(location)
         if location.text() != "":
             raise ParseFailException(f"Extra input found after input: {location.text()}")
@@ -212,7 +252,7 @@ class Parser:
 
         for pattern,walk_function in self.rules[rule]['body']:
             node = Node(rule,walk_function)
-            saved_location = copy(location)
+            saved_location = deepcopy(location)
             try:
                 for element in pattern:
                     tree = self.parse_grammar_item(element,location,tokenizer)

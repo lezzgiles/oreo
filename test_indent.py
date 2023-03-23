@@ -65,10 +65,6 @@ def language_parser():
         (['NUMBER'], lambda ctx,a: a.walk(ctx)),
         (['SYMBOL'], lambda ctx,a: get_value(ctx,a.walk(ctx))),
     ])
-    p.add_rule('statement',[
-        (['VALUE','add-term','SEMICOLON'], lambda ctx,a,b,c: b.walk(ctx)),
-        (['SYMBOL','EQUALS','add-term','SEMICOLON'], lambda ctx,a,b,c,d: set_value(ctx,a.walk(ctx), c.walk(ctx))),
-    ])
 
     return p
 
@@ -80,5 +76,5 @@ add:
     1 2 3
   multiply:
     2 3 4
-    """
+"""
     assert (language_parser.parse(p).walk(context))[-1] == 30
