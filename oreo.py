@@ -1,11 +1,72 @@
 #!/usr/bin/env python3
 
 from functools import lru_cache
+from copy import copy
+
 import sys
 import re
 
 class ParseFailException(Exception): pass
 class ParseDefinitionException(Exception): pass
+
+class LocationTracker:
+    def __init__(self,text,offset=0,newline=True,indent=0):
+        self._text = text
+        self._offset = offset
+        self._newline = newline
+        self._indent = indent
+
+    def text(self):
+        return self._text[self._offset:]
+
+    def match(self,regex,flags=0):
+        """
+        If regex matches text, return the match and
+        move up the location; otherwise raise exception.
+        """
+        m = re.match(regex,self.text(),flags)
+        if m:
+            self._offset += len(m.group())
+            m2 = re.search('\n$',m.group())
+            if m2:
+                self._newline = True
+            else:
+                self._newline = False
+            return m.group()
+        else:
+            raise ParseFailException
+
+    def match_bool(self,regex,flags=0):
+        """
+        If regex matches text, return True and move up
+        the location; otherwise return False
+        """
+        try:
+            self.match(regex,flags)
+        except ParseFailException:
+            return False
+        return True
+
+    def strip_trailing_whitespace(self):
+        self.match_bool('[ \t]*\n')
+
+    def strip_other_whitespace(self):
+        try:
+            previous_newline = self._newline
+            spaces = self.match('[ \t]*')
+            if previous_newline:
+                new_indent = len(spaces)
+            if len(spaces) > 0:
+                return True
+            else:
+                return False
+        except:
+            return False
+                
+    def backtrack(self,location):
+        self._text = location._text
+        self._offset = location._offset
+        self._newline = location._newline
 
 class Tokenizer:
     def __init__(self,ignore_whitespace=True):
@@ -13,11 +74,6 @@ class Tokenizer:
         self.ignore_whitespace = ignore_whitespace
         self.comment_styles = []
         self.indent_tokens = ()
-
-    def eat(cls,text,offset,regex,flags=0):
-        m = re.match(regex,text[offset:],flags)
-        if m:
-            offset += len(m.group())
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
@@ -31,32 +87,28 @@ class Tokenizer:
         self.indent_tokens = (indent_token,outdent_token)
         self.tabsize = tabsize
         
-    def next_token(self,name,text,offset):
-        offset = self.strip_whitespace_and_comments(text,offset)
-        m = re.match(self.tokens[name]['regex'],text[offset:],)
-        if m:
-            offset += len(m.group())
-            return Token(name,m.group(),self.tokens[name]['walk']),offset
-        else:
-            raise ParseFailException("Cannot match token")
+    def next_token(self,name,location):
+        self.strip_whitespace_and_comments(location)
+        if self.indent_tokens:
+            # Check for indent or outdent
+            pass
+        value = location.match(self.tokens[name]['regex'])
+        return Token(name,value,self.tokens[name]['walk'])
         
-    def strip_whitespace_and_comments(self,text,offset):
+    def strip_whitespace_and_comments(self,location):
         # Repeatedly try removing whitespace and comments
         modified = True
         while modified:
             modified = False
             if self.ignore_whitespace:
-                # End of line?
-                m = re.match('\s+',text[offset:])
-                if m:
-                    offset += len(m.group())
-                    modified = True
+                # Trailing whitespace
+                if location.strip_trailing_whitespace(): modified = True
+                # Non-trailing whitespace
+                if location.strip_other_whitespace(): modified = True
+                
             for (comment_style,flags) in self.comment_styles:
-                m = re.match(comment_style,text[offset:],flags)
-                if m:
-                    offset += len(m.group())
+                if location.match_bool(comment_style, flags):
                     modified = True
-        return offset
 
 class Token:
     def __init__(self,token,body,walk_function=None):
@@ -94,10 +146,11 @@ class Parser:
             raise ParseDefinitionException("There must be a special top rule named \'start\'")
         if not self.rules['start']['tokenizer']:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
-        tree,offset = self.parse_rule('start',text,0,tokenizer=self.rules['start']['tokenizer'])
-        offset = self.rules['start']['tokenizer'].strip_whitespace_and_comments(text,offset)
-        if offset != len(text):
-            raise ParseFailException(f"Extra input found after input: {text[offset:]}")
+        location = LocationTracker(text)
+        tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'])
+        self.rules['start']['tokenizer'].strip_whitespace_and_comments(location)
+        if location.text() != "":
+            raise ParseFailException(f"Extra input found after input: {location.text()}")
         return tree
 
     def expand_grammar_item(element):
@@ -119,58 +172,58 @@ class Parser:
         
         return m.group(1),matches
 
-    def parse_element(self,element,text,offset,tokenizer):
+    def parse_element(self,element,location,tokenizer):
         """
         Parse element, which can be a terminal or a non-terminal.
-        Return a Node or a Token and an updated offset, or raise ParseFailException
+        Return a Node or a Token and an updated location, or raise ParseFailException
         """
         if element in list(tokenizer.tokens)+list(tokenizer.indent_tokens):
-            tree,offset = tokenizer.next_token(element,text,offset)
+            tree = tokenizer.next_token(element,location)
         elif element in self.rules:
-            tree,offset = self.parse_rule(element,text,offset,tokenizer)
+            tree = self.parse_rule(element,location,tokenizer)
         else:
             raise ParseDefinitionException(f"element {element} not defined")
-        return tree,offset
+        return tree
 
-    def parse_grammar_item(self,element,text,offset,tokenizer):
-        elt,matches = Parser.expand_grammar_item(element)
-        if not matches:
-            return self.parse_element(elt,text,offset,tokenizer)
+    def parse_grammar_item(self,element,location,tokenizer):
+        elt,matches_specifiers = Parser.expand_grammar_item(element)
+        if not matches_specifiers:
+            return self.parse_element(elt,location,tokenizer)
         else:
             retval = []
             count = 0
             while True:
                 try:
-                    tree,offset = self.parse_element(elt,text,offset,tokenizer)
+                    tree = self.parse_element(elt,location,tokenizer)
                     retval.append(tree)
                 except ParseFailException:
-                    if matches[0] > count:
+                    if matches_specifiers[0] > count:
                         raise ParseFailException(f"Not enough terms match in list")
                     break
                 count += 1
-                if matches[1] and count == matches[1]: break
-            return retval,offset
+                if matches_specifiers[1] and count == matches_specifiers[1]: break
+            return retval
                     
     
-    @lru_cache
-    def parse_rule(self,rule,text,offset,tokenizer=None):
+    def parse_rule(self,rule,location,tokenizer=None):
+
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
         for pattern,walk_function in self.rules[rule]['body']:
             node = Node(rule,walk_function)
-            saved_offset = offset
+            saved_location = copy(location)
             try:
                 for element in pattern:
-                    tree,offset = self.parse_grammar_item(element,text,offset,tokenizer)
+                    tree = self.parse_grammar_item(element,location,tokenizer)
                     node.add_child(tree)
                 # Got a complete match, so we are done!
                 break
             except ParseFailException:
-                offset = saved_offset
+                location.backtrack(saved_location)
 
         else:
             raise ParseFailException(f"Could not match pattern {pattern}")
             
-        return node,offset
+        return node
         

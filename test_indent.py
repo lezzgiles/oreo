@@ -3,6 +3,25 @@ from functools import reduce
 import pytest
 
 @pytest.fixture
+def simple_parser():
+    t = Tokenizer()
+    t.add_token('START','start')
+    t.add_token('END','end')
+    t.use_indent_tokens('INDENT','OUTDENT')
+
+    p = Parser()
+    p.add_rule('start',[(['START','INDENT','END'],lambda a,b,c: True)],t)
+
+    return p
+
+def test_simple_indent(simple_parser):
+    p = """
+start
+    end
+    """
+    assert simple_parser.parse(p).walk()
+    
+@pytest.fixture
 def language_parser():
     t = Tokenizer()
     t.add_token('NUMBER','-?[0-9]+',lambda ctx,n: int(n))
