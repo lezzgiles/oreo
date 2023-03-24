@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from functools import lru_cache
-from copy import deepcopy
+from copy import deepcopy,copy
 
 import sys
 import re
@@ -15,6 +15,10 @@ class LocationTracker:
         self._offset = offset
         self._newline = newline
         self._last_indent = 0
+        if indents:
+            self._indents = indents
+        else:
+            self._indents = [0]
         self._highwatermark = 0
 
     def text(self):
@@ -70,9 +74,9 @@ class LocationTracker:
         self._text = location._text
         self._offset = location._offset
         self._newline = location._newline
-
-    def copy(self):
-        return LocationTracker(self._text,self._offset,self._newline)
+        self._last_indent = location._last_indent
+        self._indents = copy(location._indents)
+        self.highwatermark = location._highwatermark
 
 class Tokenizer:
     def __init__(self,ignore_whitespace=True):
@@ -80,7 +84,6 @@ class Tokenizer:
         self.ignore_whitespace = ignore_whitespace
         self.comment_styles = []
         self.indent_tokens = ()
-        self.indents = [0]
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
@@ -104,20 +107,20 @@ class Tokenizer:
         if self.indent_tokens:
             current_indent = location.last_indent()
             
-            if current_indent > self.indents[-1]:
+            if current_indent > location._indents[-1]:
                 # Indent increased
-                self.indents.append(current_indent)
+                location._indents.append(current_indent)
                 if name == self.indent_tokens[0]:
                     return Token(self.indent_tokens[0],current_indent)
                 else:
                     raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[0]}")
                     
-            elif not current_indent in self.indents:
+            elif not current_indent in location._indents:
                 raise ParseFailException("Outdent to non-matching indentation level")
             
-            elif current_indent < self.indents[-1]:
+            elif current_indent < location._indents[-1]:
                 # Indent decreased
-                self.indents.pop()
+                location._indents.pop()
                 if name == self.indent_tokens[1]:
                     return Token(self.indent_tokens[1],current_indent)
                 else:
@@ -174,17 +177,23 @@ class Parser:
     def __init__(self):
         self.rules = {}
 
+    def trace(self,indent,message):
+        if self._trace: print(f"{indent}{message}",file=sys.stderr)
+        
     def add_rule(self,name,body,tokenizer=None):
         self.rules[name] = {'body':body,'tokenizer':tokenizer}
     
-    def parse(self,text):
+    def parse(self,text,trace=False):
+        
+        self._trace = trace
+        
         if 'start' not in self.rules:
             raise ParseDefinitionException("There must be a special top rule named \'start\'")
         if not self.rules['start']['tokenizer']:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
         location = LocationTracker(text)
         try:
-            tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'])
+            tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'],indent="")
         except ParseFailException:
             raise ParseFailException(f"Failed to parse: Failed around: {location._text[location._highwatermark:]}")
         
@@ -212,7 +221,7 @@ class Parser:
         
         return m.group(1),matches
 
-    def parse_element(self,element,location,tokenizer):
+    def parse_element(self,element,location,tokenizer,indent):
         """
         Parse element, which can be a terminal or a non-terminal.
         Return a Node or a Token and an updated location, or raise ParseFailException
@@ -220,21 +229,21 @@ class Parser:
         if element in list(tokenizer.tokens)+list(tokenizer.indent_tokens):
             tree = tokenizer.next_token(element,location)
         elif element in self.rules:
-            tree = self.parse_rule(element,location,tokenizer)
+            tree = self.parse_rule(element,location,tokenizer,indent)
         else:
             raise ParseDefinitionException(f"element {element} not defined")
         return tree
 
-    def parse_grammar_item(self,element,location,tokenizer):
+    def parse_grammar_item(self,element,location,tokenizer,indent):
         elt,matches_specifiers = Parser.expand_grammar_item(element)
         if not matches_specifiers:
-            return self.parse_element(elt,location,tokenizer)
+            return self.parse_element(elt,location,tokenizer,indent=indent+"  ")
         else:
             retval = []
             count = 0
             while True:
                 try:
-                    tree = self.parse_element(elt,location,tokenizer)
+                    tree = self.parse_element(elt,location,tokenizer,indent=indent+"  ")
                     retval.append(tree)
                 except ParseFailException:
                     if matches_specifiers[0] > count:
@@ -245,21 +254,26 @@ class Parser:
             return retval
                     
     
-    def parse_rule(self,rule,location,tokenizer=None):
+    def parse_rule(self,rule,location,tokenizer=None,indent=""):
 
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
+        self.trace(indent,f"Trying to expand {rule} with text {location.text()}")
         for pattern,walk_function in self.rules[rule]['body']:
+            self.trace(indent,f" Looking at {pattern}")
             node = Node(rule,walk_function)
             saved_location = deepcopy(location)
             try:
                 for element in pattern:
-                    tree = self.parse_grammar_item(element,location,tokenizer)
+                    tree = self.parse_grammar_item(element,location,tokenizer,indent=indent+"  ")
+                    self.trace(indent,f"  Got match for {element}")
                     node.add_child(tree)
                 # Got a complete match, so we are done!
+                self.trace(indent,f" Got a complete match for {pattern}")
                 break
             except ParseFailException:
+                self.trace(indent,f" Failed a complete match for {pattern}")
                 location.backtrack(saved_location)
 
         else:

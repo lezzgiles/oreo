@@ -44,10 +44,10 @@ def language_parser():
     p.add_rule('start',[(['add-block+'],lambda ctx,a: sum([ i.walk(ctx) for i in a ]) )],tokenizer=t)
 
     p.add_rule('add-block',[
-        (['ADD_BLOCK_START','INDENT','multiply-block+','OUTDENT'], lambda ctx,a: sum([ i.walk(ctx) for i in a ]))
+        (['ADD_BLOCK_START','INDENT','multiply-block+','OUTDENT'], lambda ctx,a,b,c,d: sum([ i.walk(ctx) for i in c ]))
     ])
     p.add_rule('multiply-block',[
-        (['MULTIPLY_BLOCK_START','INDENT','add-term+','OUTDENT'], lambda ctx,a: reduce(lambda x,y:x*y,[ i.walk(ctx) for i in a ]) )
+        (['MULTIPLY_BLOCK_START','INDENT','add-term+','OUTDENT'], lambda ctx,a,b,c,d: reduce(lambda x,y:x*y,[ i.walk(ctx) for i in c ]) )
     ])
 
     p.add_rule('add-term',[
@@ -63,7 +63,7 @@ def language_parser():
     p.add_rule('number-term',[
         (['OPEN_PAREN','add-term','CLOSE_PAREN'], lambda ctx,a,b,c: b.walk(ctx)),
         (['NUMBER'], lambda ctx,a: a.walk(ctx)),
-        (['SYMBOL'], lambda ctx,a: get_value(ctx,a.walk(ctx))),
+        (['SYMBOL'], lambda ctx,a: ctx[a.walk(ctx)]),
     ])
 
     return p
@@ -77,4 +77,4 @@ add:
   multiply:
     2 3 4
 """
-    assert (language_parser.parse(p).walk(context))[-1] == 30
+    assert (language_parser.parse(p,trace=True).walk(context)) == 30
