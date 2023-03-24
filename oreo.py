@@ -57,12 +57,12 @@ class LocationTracker:
     def strip_trailing_whitespace(self):
         self.match_bool('[ \t]*\n')
 
-    def strip_other_whitespace(self):
+    def strip_other_whitespace(self,tabsize):
         try:
             previous_newline = self._newline
             spaces = self.match('[ \t]*')
             if previous_newline:
-                self._last_indent = len(spaces)
+                self._last_indent = len(spaces)+(spaces.count("\t")*(tabsize-1))
             if len(spaces) > 0:
                 return True
             else:
@@ -84,6 +84,7 @@ class Tokenizer:
         self.ignore_whitespace = ignore_whitespace
         self.comment_styles = []
         self.indent_tokens = ()
+        self.tabsize = 0
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
@@ -143,7 +144,7 @@ class Tokenizer:
                 # Trailing whitespace
                 if location.strip_trailing_whitespace(): modified = True
                 # Non-trailing whitespace
-                if location.strip_other_whitespace(): modified = True
+                if location.strip_other_whitespace(self.tabsize): modified = True
                 
             for (comment_style,flags) in self.comment_styles:
                 if location.match_bool(comment_style, flags):

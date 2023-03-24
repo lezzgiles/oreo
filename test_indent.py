@@ -37,7 +37,7 @@ def language_parser():
     t.add_token('SEMICOLON',';')
     t.add_token('ADD_BLOCK_START','add:')
     t.add_token('MULTIPLY_BLOCK_START','multiply:')
-    t.use_indent_tokens('INDENT','OUTDENT')
+    t.use_indent_tokens('INDENT','OUTDENT',tabsize=4)
 
     p = Parser()
     
@@ -78,3 +78,54 @@ add:
     2 3 4
 """
     assert (language_parser.parse(p,trace=True).walk(context)) == 30
+
+def test_tab(language_parser):
+    context = {}
+    p = """
+add:
+  multiply:
+\t1 2 3
+  multiply:
+    2 3 4
+"""
+    assert (language_parser.parse(p,trace=True).walk(context)) == 30
+
+
+# Small subset of yaml, supporting just lists and dictionaries, using the simplest syntax.
+# Used to test subindents
+def yaml_subset_parser():
+    t = Tokenizer()
+    t.add_token('NUMBER','-?[0-9]+',lambda ctx,n: int(n))
+    t.add_token('STRING','[a-zA-Z]+')
+    t.add_token('COLON',':')
+    t.add_token('BULLET','-')
+    t.use_indent_tokens('INDENT','OUTDENT')
+    
+    p = Parser()
+
+    p.add_rule('start',[(['construct'])],tokenizer=t)
+    p.add_rule('construct',[
+        (['item+'],lambda a: [ i.walk() for i in a ]),
+        (['keyvalue+'],lambda a: dict(a.walk())),
+    ])
+    p.add_rule('item',[
+        (['BULLET','INDENT','construct'],lambda a,b,c: c.walk()),
+        (['BULLET','INDENT','NUMBER'],lambda a,b,c: c.walk()),
+        (['BULLET','INDENT','STRING'],lambda a,b,c: c.walk()),
+    ])
+    p.add_rule('keyvalue',[
+        (['symbol','INDENT','construct'],lambda a,b,c: c.walk()),
+        (['symbol','INDENT','NUMBER'],lambda a,b,c: c.walk()),
+        (['symbol','INDENT','STRING'],lambda a,b,c: c.walk()),
+    ])
+    
+def test_subindent(yaml_subset_parser):
+    p = """
+- alpha: 1
+  beta: 2
+  gamma: 3
+- a: 4
+  b: 5
+  c: 6
+"""
+    assert(yaml_subset_parser.parse(p).walk())['beta'] == 2
