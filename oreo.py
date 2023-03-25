@@ -10,10 +10,10 @@ class ParseFailException(Exception): pass
 class ParseDefinitionException(Exception): pass
 
 class LocationTracker:
-    def __init__(self,text,offset=0,newline=True,indents=None):
+    def __init__(self,text,offset=0,column=0,indents=None):
         self._text = text
         self._offset = offset
-        self._newline = newline
+        self._column = column
         self._last_indent = 0
         if indents:
             self._indents = indents
@@ -26,7 +26,7 @@ class LocationTracker:
 
     def last_indent(self): return self._last_indent
 
-    def match(self,regex,flags=0):
+    def match(self,regex,tabsize=0,flags=0):
         """
         If regex matches text, return the match and
         move up the location; otherwise raise exception.
@@ -36,33 +36,33 @@ class LocationTracker:
             self._offset += len(m.group())
             m2 = re.search('\n$',m.group())
             if m2:
-                self._newline = True
+                self._column = 0
             else:
-                self._newline = False
+                self._column += len(m.group())+(m.group().count("\t")*(tabsize-1))
             return m.group()
         else:
             raise ParseFailException
 
-    def match_bool(self,regex,flags=0):
+    def match_bool(self,regex,tabsize=0,flags=0):
         """
         If regex matches text, return True and move up
         the location; otherwise return False
         """
         try:
-            self.match(regex,flags)
+            self.match(regex,tabsize,flags)
         except ParseFailException:
             return False
         return True
 
-    def strip_trailing_whitespace(self):
-        self.match_bool('[ \t]*\n')
+    def strip_trailing_whitespace(self,tabsize=0):
+        self.match_bool('[ \t]*\n',tabsize)
 
     def strip_other_whitespace(self,tabsize):
         try:
-            previous_newline = self._newline
-            spaces = self.match('[ \t]*')
-            if previous_newline:
-                self._last_indent = len(spaces)+(spaces.count("\t")*(tabsize-1))
+            starting_column = self._column
+            spaces = self.match('[ \t]*',tabsize)
+            if starting_column == 0:
+                self._last_indent = self._column
             if len(spaces) > 0:
                 return True
             else:
@@ -73,7 +73,7 @@ class LocationTracker:
     def backtrack(self,location):
         self._text = location._text
         self._offset = location._offset
-        self._newline = location._newline
+        self._column = location._column
         self._last_indent = location._last_indent
         self._indents = copy(location._indents)
         self.highwatermark = location._highwatermark
@@ -85,6 +85,7 @@ class Tokenizer:
         self.comment_styles = []
         self.indent_tokens = ()
         self.tabsize = 0
+        self.inline_indents = False
 
     def add_token(self,name,regex,walk=None):
         self.tokens[name] = {'regex':regex,'walk':walk}
@@ -92,11 +93,12 @@ class Tokenizer:
     def add_comment_style(self,regex,flags=0):
         self.comment_styles.append((regex,flags))
 
-    def use_indent_tokens(self,indent_token,outdent_token,tabsize=0):
+    def use_indent_tokens(self,indent_token,outdent_token,tabsize=0,inline_indents=False):
         if not self.ignore_whitespace:
             raise ParseDefinitionException("Cannot use indent/outdent tokens and not ignore_whitespace")
         self.indent_tokens = (indent_token,outdent_token)
         self.tabsize = tabsize
+        self.inline_indents = inline_indents
         
     def next_token(self,name,location):
         self.strip_whitespace_and_comments(location)
@@ -127,11 +129,18 @@ class Tokenizer:
                 else:
                     raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[1]}")
 
+        # If we are expecting an INDENT then it could be a same-line indent
+        if self.indent_tokens and name == self.indent_tokens[0] and self.inline_indents:
+            current_indent = location._column
+            location._indents.append(current_indent)
+            location._last_indent = current_indent
+            return Token(self.indent_tokens[0],current_indent)
+            
         # If we are expecting the INDENT or OUTDENT tokens but didn't see one, that's an error
         if name in self.indent_tokens:
             raise ParseFailException
         
-        value = location.match(self.tokens[name]['regex'])
+        value = location.match(self.tokens[name]['regex'],self.tabsize)
         location._highwatermark = location._offset
         return Token(name,value,self.tokens[name]['walk'])
         
@@ -147,7 +156,7 @@ class Tokenizer:
                 if location.strip_other_whitespace(self.tabsize): modified = True
                 
             for (comment_style,flags) in self.comment_styles:
-                if location.match_bool(comment_style, flags):
+                if location.match_bool(comment_style, self.tabsize, flags):
                     modified = True
 
 class Token:

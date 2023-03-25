@@ -93,31 +93,34 @@ add:
 
 # Small subset of yaml, supporting just lists and dictionaries, using the simplest syntax.
 # Used to test subindents
+@pytest.fixture
 def yaml_subset_parser():
     t = Tokenizer()
-    t.add_token('NUMBER','-?[0-9]+',lambda ctx,n: int(n))
+    t.add_token('NUMBER','-?[0-9]+',lambda n: int(n))
     t.add_token('STRING','[a-zA-Z]+')
     t.add_token('COLON',':')
     t.add_token('BULLET','-')
-    t.use_indent_tokens('INDENT','OUTDENT')
+    t.use_indent_tokens('INDENT','OUTDENT',tabsize=4,inline_indents=True)
     
     p = Parser()
 
-    p.add_rule('start',[(['construct'])],tokenizer=t)
+    p.add_rule('start',[(['construct'],lambda a: a.walk())],tokenizer=t)
     p.add_rule('construct',[
         (['item+'],lambda a: [ i.walk() for i in a ]),
-        (['keyvalue+'],lambda a: dict(a.walk())),
+        (['keyvalue+'],lambda a: dict([i.walk() for i in a])),
     ])
     p.add_rule('item',[
-        (['BULLET','INDENT','construct'],lambda a,b,c: c.walk()),
-        (['BULLET','INDENT','NUMBER'],lambda a,b,c: c.walk()),
-        (['BULLET','INDENT','STRING'],lambda a,b,c: c.walk()),
+        (['BULLET','INDENT','construct','OUTDENT'],lambda a,b,c,d: c.walk()),
+        (['BULLET','INDENT','NUMBER',   'OUTDENT'],lambda a,b,c,d: c.walk()),
+        (['BULLET','INDENT','STRING',   'OUTDENT'],lambda a,b,c,d: c.walk()),
     ])
     p.add_rule('keyvalue',[
-        (['symbol','INDENT','construct'],lambda a,b,c: c.walk()),
-        (['symbol','INDENT','NUMBER'],lambda a,b,c: c.walk()),
-        (['symbol','INDENT','STRING'],lambda a,b,c: c.walk()),
+        (['STRING','COLON','INDENT','construct','OUTDENT'],lambda a,b,c,d,e: (a.walk(),d.walk())),
+        (['STRING','COLON','INDENT','NUMBER',   'OUTDENT'],lambda a,b,c,d,e: (a.walk(),d.walk())),
+        (['STRING','COLON','INDENT','STRING',   'OUTDENT'],lambda a,b,c,d,e: (a.walk(),d.walk())),
     ])
+
+    return p
     
 def test_subindent(yaml_subset_parser):
     p = """
@@ -128,4 +131,4 @@ def test_subindent(yaml_subset_parser):
   b: 5
   c: 6
 """
-    assert(yaml_subset_parser.parse(p).walk())['beta'] == 2
+    assert(yaml_subset_parser.parse(p,trace=True).walk())[0]['beta'] == 2
