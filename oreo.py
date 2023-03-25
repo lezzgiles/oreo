@@ -264,12 +264,16 @@ class Parser:
             return retval
                     
     
-    def parse_rule(self,rule,location,tokenizer=None,indent=""):
+    def parse_rule(self,rule,location,tokenizer,indent=""):
 
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
         self.trace(indent,f"Trying to expand {rule} with text {location.text()}")
+        
+        if self.rules[rule]['tokenizer']:
+            tokenizer = self.rules[rule]['tokenizer']
+            
         for pattern,walk_function in self.rules[rule]['body']:
             self.trace(indent,f" Looking at {pattern}")
             node = Node(rule,walk_function)
