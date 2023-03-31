@@ -55,7 +55,10 @@ class LocationTracker:
         return True
 
     def strip_trailing_whitespace(self,tabsize=0):
-        self.match_bool('[ \t]*\n',tabsize)
+        if self.match_bool('[ \t]*\n',tabsize):
+            return True
+        else:
+            return False
 
     def strip_other_whitespace(self,tabsize):
         try:
@@ -151,9 +154,11 @@ class Tokenizer:
             modified = False
             if self.ignore_whitespace:
                 # Trailing whitespace
-                if location.strip_trailing_whitespace(): modified = True
+                if location.strip_trailing_whitespace():
+                    modified = True
                 # Non-trailing whitespace
-                if location.strip_other_whitespace(self.tabsize): modified = True
+                if location.strip_other_whitespace(self.tabsize):
+                    modified = True
                 
             for (comment_style,flags) in self.comment_styles:
                 if location.match_bool(comment_style, self.tabsize, flags):
@@ -167,7 +172,10 @@ class Token:
 
     def walk(self,*context):
         if self.walk_function:
-            return self.walk_function(*context,self.body)
+            try:
+                return self.walk_function(*context,self.body)
+            except TypeError:
+                raise ParseDefinitionException(f"walk() function for {self.token} called with wrong number of arguments - did you forget to pass in the context?")
         else:
             return self.body
         
@@ -181,7 +189,10 @@ class Node:
         self.children.append(child)
 
     def walk(self,*context):
-        return self.walk_function(*context,*self.children)
+        try:
+            return self.walk_function(*context,*self.children)
+        except TypeError:
+            raise ParseDefinitionException(f"walk() function for {self.rule} called with wrong number of arguments - did you forget to pass in the context?")
 
 class Parser:
     def __init__(self):
@@ -191,6 +202,8 @@ class Parser:
         if self._trace: print(f"{indent}{message}",file=sys.stderr)
         
     def add_rule(self,name,body,tokenizer=None):
+        if name in self.rules:
+            raise ParseDefinitionException(f"Rule \"{name}\" multiply defined!")
         self.rules[name] = {'body':body,'tokenizer':tokenizer}
     
     def parse(self,text,trace=False):

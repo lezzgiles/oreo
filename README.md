@@ -57,6 +57,21 @@ Or we can simplify:
 value = parser.parse('1 + 1').walk()
 ```
 
+## Writing your own parser
+
+Start by copying one of the test_*.py files:
+- **test_indent.py** defines a grammar for a yaml-like language.
+- **test_language.py** defines a language with variables, expressions, if-statements and while-statements
+
+These other test_*.py files are examples of how to use some specific features of oreo:
+- **test_simple.py** defines a grammar for really simple arithmetic expressions.
+- **test_arithmetic.py** defines a grammar for simple arithmetic expressions.
+- **test_context.py** defines a simple grammar that saves state in a context.
+- **test_list_addition.py** defines a simple grammar for adding lists of numbers and for testing the ?, *, + modifiers
+- **test_tokenizer.py** shows how to switch tokenizers in the middle of a grammar.
+
+Write your language incrementally - start with the smallest set of features that make sense, and add as you go.  Write your test program first, then write the rules to support the test program.  Write the 'walk()' functions as you go instead of waiting for the end to write them all.
+
 ## Tokenizer
 
 ### Tokenizer()
