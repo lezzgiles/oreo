@@ -1,52 +1,57 @@
 #!/usr/bin/env python3
-
-from functools import lru_cache
+"""
+Provides the Tokenizer and Parser classes that will take
+a grammar and generate a walkable tree of Node and Token objects.
+"""
 from copy import deepcopy,copy
 
 import sys
 import re
 
-class ParseFailException(Exception): pass
-class ParseDefinitionException(Exception): pass
+class ParseFailException(Exception):
+    "Failed to parse input"
+
+class ParseDefinitionException(Exception):
+    "Something wrong with the grammar definition"
 
 class LocationTracker:
-    def __init__(self,text,filename,offset=0,column=0,indents=None):
-        self._text = text
-        self._offset = offset
+    "Track current location in input stream; allow for backtracking"
+    def __init__(self, text:str, filename:str, offset:int = 0, column:int = 0, indents:int = None):
+        self.all_text = text
+        self.offset = offset
         self.column = column
-        self._last_indent = 0
+        self.last_indent = 0
         if indents:
-            self._indents = indents
+            self.indents = indents
         else:
-            self._indents = [0]
-        self._highwatermark = 0
+            self.indents = [0]
+        self.highwatermark = 0
         self.filename = filename
         self.linenumber = 0
 
     def text(self):
-        return self._text[self._offset:]
+        "Simply return the text from the current offset to the end of input"
+        return self.all_text[self.offset:]
 
-    def last_indent(self): return self._last_indent
-
-    def match(self,regex,tabsize=0,flags=0):
+    def match(self,regex:str,tabsize:int=0,flags:int=0):
         """
         If regex matches text, return the match and
         move up the location; otherwise raise exception.
         """
-        m = re.match(regex,self.text(),flags)
-        if m:
-            self._offset += len(m.group())
-            m2 = re.search('\n$',m.group())
-            if m2:
+        match = re.match(regex,self.text(),flags)
+        if match:
+            self.offset += len(match.group())
+            newline_match = re.search('\n$',match.group())
+            if newline_match:
                 self.linenumber += 1
                 self.column = 0
             else:
-                self.column += len(m.group())+(m.group().count("\t")*(tabsize-1))
-            return m.group()
+                self.column += len(match.group())+(match.group().count("\t")*(tabsize-1))
+            return match.group()
         else:
             raise ParseFailException
 
-    def match_bool(self,regex,tabsize=0,flags=0):
+    def match_bool(self,regex:str,tabsize:int=0,flags:int=0):
         """
         If regex matches text, return True and move up
         the location; otherwise return False
@@ -57,36 +62,42 @@ class LocationTracker:
             return False
         return True
 
-    def strip_trailing_whitespace(self,tabsize=0):
+    def strip_trailing_whitespace(self,tabsize:int=0):
+        "Remove whitespace up to end-of-line"
         if self.match_bool('[ \t]*\n',tabsize):
             return True
         else:
             return False
 
-    def strip_other_whitespace(self,tabsize):
+    def strip_other_whitespace(self,tabsize:int):
+        "Remove whitespace inside a line, possibly at the beginning of a line"
         try:
             starting_column = self.column
             spaces = self.match('[ \t]*',tabsize)
             if starting_column == 0:
-                self._last_indent = self.column
+                self.last_indent = self.column
             if len(spaces) > 0:
                 return True
             else:
                 return False
-        except:
+        except ParseFailException:
             return False
-                
-    def backtrack(self,location):
-        self._text = location._text
-        self._offset = location._offset
+
+    def backtrack(self,location:'LocationTracker'):
+        "Revert to an earlier location"
+        self.all_text = location.all_text
+        self.offset = location.offset
         self.filename = location.filename
         self.linenumber = location.linenumber
         self.column = location.column
-        self._last_indent = location._last_indent
-        self._indents = copy(location._indents)
-        self.highwatermark = location._highwatermark
+        self.last_indent = location.last_indent
+        self.indents = copy(location.indents)
+        self.highwatermark = location.highwatermark
 
 class Tokenizer:
+    """
+    Tokenizer takes a list of token definitions and will determine if text matches a specific token.
+    """
     def __init__(self,ignore_whitespace=True):
         self.tokens = {}
         self.ignore_whitespace = ignore_whitespace
@@ -96,45 +107,49 @@ class Tokenizer:
         self.inline_indents = False
 
     def add_token(self,name,regex,walk=None):
+        "User-visible method to add a token to the tokenizer"
         self.tokens[name] = {'regex':regex,'walk':walk}
 
     def add_comment_style(self,regex,flags=0):
+        "User-visible method to add a regex that defines a comment style"
         self.comment_styles.append((regex,flags))
 
     def use_indent_tokens(self,indent_token,outdent_token,tabsize=0,inline_indents=False):
+        "User-visible method to define how indent & outdent tokens are defined"
         if not self.ignore_whitespace:
             raise ParseDefinitionException("Cannot use indent/outdent tokens and not ignore_whitespace")
         self.indent_tokens = (indent_token,outdent_token)
         self.tabsize = tabsize
         self.inline_indents = inline_indents
-        
+
     def next_token(self,name,location):
+        "Return the next token if it matches 'name'"
         self.strip_whitespace_and_comments(location)
-        location._highwatermark = location._offset
+        location.highwatermark = location.offset
         token_start_filename = location.filename
         token_start_linenumber = location.linenumber
         token_start_column = location.column
-        
+
         # Now we've stripped everything, comments and spaces, up to
         # the next real thing, so look at the indent level.  We look
         # at the level before every token, but it won't change in the same line
         if self.indent_tokens:
-            current_indent = location.last_indent()
-            
-            if current_indent > location._indents[-1]:
+            current_indent = location.last_indent
+
+            if current_indent > location.indents[-1]:
                 # Indent increased
-                location._indents.append(current_indent)
+                location.indents.append(current_indent)
                 if name == self.indent_tokens[0]:
                     return Token(self.indent_tokens[0],current_indent,token_start_filename,token_start_linenumber,token_start_column)
                 else:
                     raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[0]}")
-                    
-            elif not current_indent in location._indents:
+
+            elif not current_indent in location.indents:
                 raise ParseFailException("Outdent to non-matching indentation level")
-            
-            elif current_indent < location._indents[-1]:
+
+            elif current_indent < location.indents[-1]:
                 # Indent decreased
-                location._indents.pop()
+                location.indents.pop()
                 if name == self.indent_tokens[1]:
                     return Token(self.indent_tokens[1],current_indent,token_start_filename,token_start_linenumber,token_start_column)
                 else:
@@ -143,20 +158,20 @@ class Tokenizer:
         # If we are expecting an INDENT then it could be a same-line indent
         if self.indent_tokens and name == self.indent_tokens[0] and self.inline_indents:
             current_indent = location.column
-            location._indents.append(current_indent)
-            location._last_indent = current_indent
+            location.indents.append(current_indent)
+            location.last_indent = current_indent
             return Token(self.indent_tokens[0],current_indent,token_start_filename,token_start_linenumber,token_start_column)
-            
+
         # If we are expecting the INDENT or OUTDENT tokens but didn't see one, that's an error
         if name in self.indent_tokens:
             raise ParseFailException
-        
+
         value = location.match(self.tokens[name]['regex'],self.tabsize)
-        location._highwatermark = location._offset
+        location.highwatermark = location.offset
         return Token(name,value,token_start_filename,token_start_linenumber,token_start_column,self.tokens[name]['walk'])
-        
+
     def strip_whitespace_and_comments(self,location):
-        # Repeatedly try removing whitespace and comments
+        "Repeatedly try removing whitespace and comments"
         modified = True
         while modified:
             modified = False
@@ -167,12 +182,15 @@ class Tokenizer:
                 # Non-trailing whitespace
                 if location.strip_other_whitespace(self.tabsize):
                     modified = True
-                
+
             for (comment_style,flags) in self.comment_styles:
                 if location.match_bool(comment_style, self.tabsize, flags):
                     modified = True
 
 class Token:
+    """
+    A token in the language, generated by Tokenizer
+    """
     def __init__(self,token,body,filename,linenumber,column,walk_function=None):
         self.token = token
         self.body = body
@@ -182,34 +200,42 @@ class Token:
         self.walk_function = walk_function
 
     def walk(self,*context):
+        "Call the walk() function defined for this token; if no walk() defined then just return the token value"
         if self.walk_function:
             try:
                 return self.walk_function(*context,self.body)
-            except TypeError:
-                raise ParseDefinitionException(f"walk() function for {self.token} called with wrong number of arguments - did you forget to pass in the context?")
+            except TypeError as exc:
+                raise ParseDefinitionException(f"walk() function for {self.token} called with wrong number of arguments - did you forget to pass in the context?") from exc
         else:
             return self.body
 
     def dump(self,indent=""):
+        "Dump the Token contents"
         print(f"{indent}- {self.token} = \"{self.body}\"; file {self.filename}:{self.linenumber}:{self.column}")
-            
-    
+
+
 class Node:
+    """
+    A node in the language grammar, also the root of a tree or sub-tree.
+    """
     def __init__(self,rule,walk_function):
         self.rule = rule
         self.children = []
         self.walk_function = walk_function
 
     def add_child(self,child):
+        "Just add a child Token or Node to the tree"
         self.children.append(child)
 
     def walk(self,*context):
+        "Call the walk() function defined for this node in the grammar."
         try:
             return self.walk_function(*context,*self.children)
-        except TypeError:
-            raise ParseDefinitionException(f"walk() function for {self.rule} called with wrong number of arguments - did you forget to pass in the context?")
+        except TypeError as exc:
+            raise ParseDefinitionException(f"walk() function for {self.rule} called with wrong number of arguments - did you forget to pass in the context?") from exc
 
     def dump(self,indent=""):
+        "Dump the Node contents along with any children nodes"
         print(f"{indent}- {self.rule}")
         for child in self.children:
             if isinstance(child,list):
@@ -219,21 +245,28 @@ class Node:
                 child.dump(indent+"  ")
 
 class Parser:
+    """
+    Define a grammar and tokenizer(s) used to parse input.  Provides methods to add grammar rules and to parse input.
+    """
     def __init__(self):
         self.rules = {}
+        self._trace = False
 
     def __trace(self,indent,message):
-        if self._trace: print(f"{indent}{message}",file=sys.stderr)
-        
+        "Print a trace message"
+        if self._trace:
+            print(f"{indent}{message}",file=sys.stderr)
+
     def add_rule(self,name,body,tokenizer=None):
+        "User-visible method to add a rule."
         if name in self.rules:
             raise ParseDefinitionException(f"Rule \"{name}\" multiply defined!")
         self.rules[name] = {'body':body,'tokenizer':tokenizer}
-    
+
     def parse(self,text,trace=False,filename="Input"):
-        
+        "User-visible method to parse input"
         self._trace = trace
-        
+
         if 'start' not in self.rules:
             raise ParseDefinitionException("There must be a special top rule named \'start\'")
         if not self.rules['start']['tokenizer']:
@@ -241,9 +274,9 @@ class Parser:
         location = LocationTracker(text,filename)
         try:
             tree = self.__parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'],indent="")
-        except ParseFailException:
-            raise ParseFailException(f"Failed to parse: Failed around: {location._text[location._highwatermark:]}")
-        
+        except ParseFailException as exc:
+            raise ParseFailException(f"Failed to parse: Failed around: {location.all_text[location.highwatermark:]}") from exc
+
         self.rules['start']['tokenizer'].strip_whitespace_and_comments(location)
         if location.text() != "":
             raise ParseFailException(f"Extra input found after input: {location.text()}")
@@ -255,11 +288,12 @@ class Parser:
         Need to read in the whole file because we backtrack a lot during the parsing/tokenizing
         """
 
-        with open(filename) as f:
-            input = f.read()
-            
-        return self.parse(input,trace,filename=filename)
+        with open(filename, encoding='utf-8') as input_file:
+            body = input_file.read()
 
+        return self.parse(body,trace,filename=filename)
+
+    @staticmethod
     def __expand_grammar_item(element):
         """
         Looks at an element in the grammar, e.g. this+, and returns the element name
@@ -269,15 +303,19 @@ class Parser:
         'this?' => 'this',(0,1)
         'this' => 'this',()
         """
-        m = re.match('([a-zA-Z0-9_-]+)(.*)',element)
-        if not m:
+        match = re.match('([a-zA-Z0-9_-]+)(.*)',element)
+        if not match:
             raise ParseDefinitionException(f"Parse Error: token {element} misformed")
-        if m.group(2) == '+': matches = ( 1,None )
-        elif m.group(2) == '*': matches = ( 0,None )
-        elif m.group(2) == '?': matches = ( 0,1 )
-        elif m.group(2) == '': matches = ()
-        
-        return m.group(1),matches
+        if match.group(2) == '+':
+            matches = ( 1,None )
+        elif match.group(2) == '*':
+            matches = ( 0,None )
+        elif match.group(2) == '?':
+            matches = ( 0,1 )
+        elif match.group(2) == '':
+            matches = ()
+
+        return match.group(1),matches
 
     def __parse_element(self,element,location,tokenizer,indent):
         """
@@ -293,6 +331,9 @@ class Parser:
         return tree
 
     def __parse_grammar_item(self,element,location,tokenizer,indent):
+        """
+        Parse a grammar item, which will be a Node or Token with a possible trailing modifier (+, * or ?)
+        """
         elt,matches_specifiers = Parser.__expand_grammar_item(element)
         if not matches_specifiers:
             return self.__parse_element(elt,location,tokenizer,indent=indent+"  ")
@@ -303,25 +344,27 @@ class Parser:
                 try:
                     tree = self.__parse_element(elt,location,tokenizer,indent=indent+"  ")
                     retval.append(tree)
-                except ParseFailException:
+                except ParseFailException as exc:
                     if matches_specifiers[0] > count:
-                        raise ParseFailException(f"Not enough terms match in list")
+                        raise ParseFailException("Not enough terms match in list") from exc
                     break
                 count += 1
-                if matches_specifiers[1] and count == matches_specifiers[1]: break
+                if matches_specifiers[1] and count == matches_specifiers[1]:
+                    break
             return retval
-                    
-    
-    def __parse_rule(self,rule,location,tokenizer,indent=""):
 
+    def __parse_rule(self,rule,location,tokenizer,indent=""):
+        """
+        Parse an entire rule.  This is the recursive-friendly key method for Parser.
+        """
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
         self.__trace(indent,f"Trying to expand {rule} with text {location.text()}")
-        
+
         if self.rules[rule]['tokenizer']:
             tokenizer = self.rules[rule]['tokenizer']
-            
+
         for pattern,walk_function in self.rules[rule]['body']:
             self.__trace(indent,f" Looking at {pattern}")
             node = Node(rule,walk_function)
@@ -340,6 +383,5 @@ class Parser:
 
         else:
             raise ParseFailException(f"Could not match pattern {pattern}")
-            
+
         return node
-        
