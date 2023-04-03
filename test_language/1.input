@@ -1,0 +1,12 @@
+count = 1;
+limit = 2;
+accumulator = 1;
+if count == 1 {
+    limit = limit + 2;
+}
+
+while count != limit {
+    accumulator = accumulator * 2;
+    count = count + 1;
+}
+result = accumulator;

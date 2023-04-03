@@ -56,6 +56,10 @@ Or we can simplify:
 ```
 value = parser.parse('1 + 1').walk()
 ```
+For convenience there is a method to parse the contents of a file:
+```
+tree = parser.parse_file(filename)
+```
 
 ## Writing your own parser
 
@@ -127,3 +131,4 @@ Note that the walk() functions defined in the rule must explicitly pass down any
 ## To do
 - Add location details to Node and Token objects
 - tabsize = 0 should cause an error if a tab is found in whitespace
+- Add type annotations

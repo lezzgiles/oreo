@@ -178,7 +178,11 @@ class Token:
                 raise ParseDefinitionException(f"walk() function for {self.token} called with wrong number of arguments - did you forget to pass in the context?")
         else:
             return self.body
-        
+
+    def dump(self,indent=""):
+        print(f"{indent}- {self.token} = \"{self.body}\"")
+            
+    
 class Node:
     def __init__(self,rule,walk_function):
         self.rule = rule
@@ -194,11 +198,20 @@ class Node:
         except TypeError:
             raise ParseDefinitionException(f"walk() function for {self.rule} called with wrong number of arguments - did you forget to pass in the context?")
 
+    def dump(self,indent=""):
+        print(f"{indent}- {self.rule}")
+        for child in self.children:
+            if isinstance(child,list):
+                for grandchild in child:
+                    grandchild.dump(indent+"  ")
+            else:
+                child.dump(indent+"  ")
+
 class Parser:
     def __init__(self):
         self.rules = {}
 
-    def trace(self,indent,message):
+    def __trace(self,indent,message):
         if self._trace: print(f"{indent}{message}",file=sys.stderr)
         
     def add_rule(self,name,body,tokenizer=None):
@@ -216,7 +229,7 @@ class Parser:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
         location = LocationTracker(text)
         try:
-            tree = self.parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'],indent="")
+            tree = self.__parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'],indent="")
         except ParseFailException:
             raise ParseFailException(f"Failed to parse: Failed around: {location._text[location._highwatermark:]}")
         
@@ -225,7 +238,18 @@ class Parser:
             raise ParseFailException(f"Extra input found after input: {location.text()}")
         return tree
 
-    def expand_grammar_item(element):
+    def parse_file(self,filename,trace=False):
+        """
+        Parse the contents of a file.
+        Need to read in the whole file because we backtrack a lot during the parsing/tokenizing
+        """
+
+        with open(filename) as f:
+            input = f.read()
+            
+        return self.parse(input,trace)
+
+    def __expand_grammar_item(element):
         """
         Looks at an element in the grammar, e.g. this+, and returns the element name
         'this' and the minimum and maximum number of instances, for example:
@@ -244,7 +268,7 @@ class Parser:
         
         return m.group(1),matches
 
-    def parse_element(self,element,location,tokenizer,indent):
+    def __parse_element(self,element,location,tokenizer,indent):
         """
         Parse element, which can be a terminal or a non-terminal.
         Return a Node or a Token and an updated location, or raise ParseFailException
@@ -252,21 +276,21 @@ class Parser:
         if element in list(tokenizer.tokens)+list(tokenizer.indent_tokens):
             tree = tokenizer.next_token(element,location)
         elif element in self.rules:
-            tree = self.parse_rule(element,location,tokenizer,indent)
+            tree = self.__parse_rule(element,location,tokenizer,indent)
         else:
             raise ParseDefinitionException(f"element {element} not defined")
         return tree
 
-    def parse_grammar_item(self,element,location,tokenizer,indent):
-        elt,matches_specifiers = Parser.expand_grammar_item(element)
+    def __parse_grammar_item(self,element,location,tokenizer,indent):
+        elt,matches_specifiers = Parser.__expand_grammar_item(element)
         if not matches_specifiers:
-            return self.parse_element(elt,location,tokenizer,indent=indent+"  ")
+            return self.__parse_element(elt,location,tokenizer,indent=indent+"  ")
         else:
             retval = []
             count = 0
             while True:
                 try:
-                    tree = self.parse_element(elt,location,tokenizer,indent=indent+"  ")
+                    tree = self.__parse_element(elt,location,tokenizer,indent=indent+"  ")
                     retval.append(tree)
                 except ParseFailException:
                     if matches_specifiers[0] > count:
@@ -277,30 +301,30 @@ class Parser:
             return retval
                     
     
-    def parse_rule(self,rule,location,tokenizer,indent=""):
+    def __parse_rule(self,rule,location,tokenizer,indent=""):
 
         if rule not in self.rules:
             raise ParseDefinitionException("Parse error: Rule {rule} not in rules")
 
-        self.trace(indent,f"Trying to expand {rule} with text {location.text()}")
+        self.__trace(indent,f"Trying to expand {rule} with text {location.text()}")
         
         if self.rules[rule]['tokenizer']:
             tokenizer = self.rules[rule]['tokenizer']
             
         for pattern,walk_function in self.rules[rule]['body']:
-            self.trace(indent,f" Looking at {pattern}")
+            self.__trace(indent,f" Looking at {pattern}")
             node = Node(rule,walk_function)
             saved_location = deepcopy(location)
             try:
                 for element in pattern:
-                    tree = self.parse_grammar_item(element,location,tokenizer,indent=indent+"  ")
-                    self.trace(indent,f"  Got match for {element}")
+                    tree = self.__parse_grammar_item(element,location,tokenizer,indent=indent+"  ")
+                    self.__trace(indent,f"  Got match for {element}")
                     node.add_child(tree)
                 # Got a complete match, so we are done!
-                self.trace(indent,f" Got a complete match for {pattern}")
+                self.__trace(indent,f" Got a complete match for {pattern}")
                 break
             except ParseFailException:
-                self.trace(indent,f" Failed a complete match for {pattern}")
+                self.__trace(indent,f" Failed a complete match for {pattern}")
                 location.backtrack(saved_location)
 
         else:
