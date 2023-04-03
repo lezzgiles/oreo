@@ -10,16 +10,18 @@ class ParseFailException(Exception): pass
 class ParseDefinitionException(Exception): pass
 
 class LocationTracker:
-    def __init__(self,text,offset=0,column=0,indents=None):
+    def __init__(self,text,filename,offset=0,column=0,indents=None):
         self._text = text
         self._offset = offset
-        self._column = column
+        self.column = column
         self._last_indent = 0
         if indents:
             self._indents = indents
         else:
             self._indents = [0]
         self._highwatermark = 0
+        self.filename = filename
+        self.linenumber = 0
 
     def text(self):
         return self._text[self._offset:]
@@ -36,9 +38,10 @@ class LocationTracker:
             self._offset += len(m.group())
             m2 = re.search('\n$',m.group())
             if m2:
-                self._column = 0
+                self.linenumber += 1
+                self.column = 0
             else:
-                self._column += len(m.group())+(m.group().count("\t")*(tabsize-1))
+                self.column += len(m.group())+(m.group().count("\t")*(tabsize-1))
             return m.group()
         else:
             raise ParseFailException
@@ -62,10 +65,10 @@ class LocationTracker:
 
     def strip_other_whitespace(self,tabsize):
         try:
-            starting_column = self._column
+            starting_column = self.column
             spaces = self.match('[ \t]*',tabsize)
             if starting_column == 0:
-                self._last_indent = self._column
+                self._last_indent = self.column
             if len(spaces) > 0:
                 return True
             else:
@@ -76,7 +79,9 @@ class LocationTracker:
     def backtrack(self,location):
         self._text = location._text
         self._offset = location._offset
-        self._column = location._column
+        self.filename = location.filename
+        self.linenumber = location.linenumber
+        self.column = location.column
         self._last_indent = location._last_indent
         self._indents = copy(location._indents)
         self.highwatermark = location._highwatermark
@@ -106,6 +111,9 @@ class Tokenizer:
     def next_token(self,name,location):
         self.strip_whitespace_and_comments(location)
         location._highwatermark = location._offset
+        token_start_filename = location.filename
+        token_start_linenumber = location.linenumber
+        token_start_column = location.column
         
         # Now we've stripped everything, comments and spaces, up to
         # the next real thing, so look at the indent level.  We look
@@ -117,7 +125,7 @@ class Tokenizer:
                 # Indent increased
                 location._indents.append(current_indent)
                 if name == self.indent_tokens[0]:
-                    return Token(self.indent_tokens[0],current_indent)
+                    return Token(self.indent_tokens[0],current_indent,token_start_filename,token_start_linenumber,token_start_column)
                 else:
                     raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[0]}")
                     
@@ -128,16 +136,16 @@ class Tokenizer:
                 # Indent decreased
                 location._indents.pop()
                 if name == self.indent_tokens[1]:
-                    return Token(self.indent_tokens[1],current_indent)
+                    return Token(self.indent_tokens[1],current_indent,token_start_filename,token_start_linenumber,token_start_column)
                 else:
                     raise ParseFailException("Mismatch: expecting {name} but got {self.indent_tokens[1]}")
 
         # If we are expecting an INDENT then it could be a same-line indent
         if self.indent_tokens and name == self.indent_tokens[0] and self.inline_indents:
-            current_indent = location._column
+            current_indent = location.column
             location._indents.append(current_indent)
             location._last_indent = current_indent
-            return Token(self.indent_tokens[0],current_indent)
+            return Token(self.indent_tokens[0],current_indent,token_start_filename,token_start_linenumber,token_start_column)
             
         # If we are expecting the INDENT or OUTDENT tokens but didn't see one, that's an error
         if name in self.indent_tokens:
@@ -145,7 +153,7 @@ class Tokenizer:
         
         value = location.match(self.tokens[name]['regex'],self.tabsize)
         location._highwatermark = location._offset
-        return Token(name,value,self.tokens[name]['walk'])
+        return Token(name,value,token_start_filename,token_start_linenumber,token_start_column,self.tokens[name]['walk'])
         
     def strip_whitespace_and_comments(self,location):
         # Repeatedly try removing whitespace and comments
@@ -165,9 +173,12 @@ class Tokenizer:
                     modified = True
 
 class Token:
-    def __init__(self,token,body,walk_function=None):
+    def __init__(self,token,body,filename,linenumber,column,walk_function=None):
         self.token = token
         self.body = body
+        self.filename = filename
+        self.linenumber = linenumber
+        self.column = column
         self.walk_function = walk_function
 
     def walk(self,*context):
@@ -180,7 +191,7 @@ class Token:
             return self.body
 
     def dump(self,indent=""):
-        print(f"{indent}- {self.token} = \"{self.body}\"")
+        print(f"{indent}- {self.token} = \"{self.body}\"; file {self.filename}:{self.linenumber}:{self.column}")
             
     
 class Node:
@@ -219,7 +230,7 @@ class Parser:
             raise ParseDefinitionException(f"Rule \"{name}\" multiply defined!")
         self.rules[name] = {'body':body,'tokenizer':tokenizer}
     
-    def parse(self,text,trace=False):
+    def parse(self,text,trace=False,filename="Input"):
         
         self._trace = trace
         
@@ -227,7 +238,7 @@ class Parser:
             raise ParseDefinitionException("There must be a special top rule named \'start\'")
         if not self.rules['start']['tokenizer']:
             raise ParseDefinitionException("\'start\' rule must specify a tokenizer")
-        location = LocationTracker(text)
+        location = LocationTracker(text,filename)
         try:
             tree = self.__parse_rule('start',location,tokenizer=self.rules['start']['tokenizer'],indent="")
         except ParseFailException:
@@ -247,7 +258,7 @@ class Parser:
         with open(filename) as f:
             input = f.read()
             
-        return self.parse(input,trace)
+        return self.parse(input,trace,filename=filename)
 
     def __expand_grammar_item(element):
         """
