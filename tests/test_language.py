@@ -118,5 +118,5 @@ result = accumulator;
 def test_parsefile(language_parser):
     "Test program read from a file"
     ctx = {}
-    assert language_parser.parse_file("test_language/1.input").walk(ctx) == 8
-    language_parser.parse_file("test_language/1.input").dump()
+    assert language_parser.parse_file("tests/test_language/1.input").walk(ctx) == 8
+    language_parser.parse_file("tests/test_language/1.input").dump()

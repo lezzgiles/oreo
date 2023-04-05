@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Provides the Tokenizer and Parser classes that will take
-a grammar and generate a walkable tree of Node and Token objects.
-"""
+"Pure-python parser intended for small Domain-Specific Languages (DSLs)."
+__version__ = "0.1"
+
 from copy import deepcopy,copy
 
 import sys
